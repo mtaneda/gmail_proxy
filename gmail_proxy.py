@@ -16,16 +16,22 @@ Copyright (C) 2016 TANEDA M.
 This code was designed and coded by TANEDA M.
 """
 __author__  = 'TANEDA M.'
-__version__ = '0.1'
+__version__ = '0.2'
 
 import sys
 import socket
 import logging
+import smtplib
+from email.message import Message
+from email.parser import Parser
+from email.header import decode_header
+from email.header import Header
+from email.mime.text import MIMEText
 
 """
 設定
 """
-HOST     = '64.233.187.27'	# Google MX
+HOST     = '64.233.187.27'      # Google MX
 #HOST     = 'localhost'
 PORT     = 25
 MYDOMAIN = 'ncad.co.jp'
@@ -116,9 +122,11 @@ class Gmail:
         """ 本体
         """
         mail_from = ''
+        mail_header_buf = ''
         su = StreamUtil()
 
         s = None
+        connected_flag = False
         for res in socket.getaddrinfo(HOST, PORT, socket.AF_UNSPEC, socket.SOCK_STREAM):
             af, socktype, proto, canonname, sa = res
             try:
@@ -139,6 +147,7 @@ class Gmail:
         else:
             logging.debug('Connected to: ' + HOST)
             offline = False
+            connected_flag = True
 
         # TODO メソッド抽出
         if not offline:
@@ -177,6 +186,7 @@ class Gmail:
                 offline = su.send_and_recv(s, offline, 'DATA\r\n', '354')
 
             if state == self.STATE_HEADER:
+                mail_header_buf += line
                 if not offline:
                     s.send(line)
                     logging.debug('SEND: ' + line.strip())
@@ -191,14 +201,38 @@ class Gmail:
         offline = su.send_and_recv(s, offline, '\r\n.\r\n', '250')
         offline = su.send_and_recv(s, offline, 'QUIT\r\n', '221')
 
+        # ヘッダーから件名を取得してログに出しておく
+        p = Parser()
+        header = p.parsestr(mail_header_buf, True)  # True=headeronly
+        subject_enc = decode_header(header['Subject'])[0]
+        subject = subject_enc[0]
+        logging.info("Subject: " + subject);
+        if subject_enc[1] is not None:
+            logging.info("Subject-Encoding: " + subject_enc[1])
+
+        if connected_flag and offline:
+            logging.debug("Failed to gmail")
+
+             # エラーになったときの失敗を通知する処理
+            msg = MIMEText('「' + subject + '」のメールの送信に失敗しました。', 'plain', 'utf-8')
+            msg['Subject'] = Header(subject, 'utf-8')
+            msg['From'] = header['From']
+            msg['To'] = header['To']
+            msg['Date'] = header['Date']
+
+            smtp = smtplib.SMTP(HOST, PORT)
+            smtp.sendmail(mail_from, MYADDR, msg.as_string())
+
 def main():
     """ メイン関数
     """
 
     logging.basicConfig(filename = LOGFILE, level = logging.DEBUG)
+    logging.info('start gmail_proxy (ver ' + __version__ + ')')
 
     gmail = Gmail()
     gmail.do_proxy()
+    logging.info('complete gmail_proxy (ver ' + __version__ + ')')
 
     sys.exit(0)
 
