@@ -219,6 +219,12 @@ class Gmail:
         if connected_flag and offline:
             logger.debug("Failed proxy to gmail")
 
+            errmailfile = os.path.join(settings.ERRMAILDIR, datetime.now().strftime("%Y%m%d%H%M%S.eml"))
+            f = open(errmailfile, 'w')
+            f.write(mail_header_buf)
+            f.write(mail_body_buf)
+            f.close()
+
             # エラーになったときの失敗を通知する処理
             # TODO: harre-orz氏に作ってもらった機能は、これだけのために smtplib を使っているのでいずれ統一する。
             msg = MIMEText('「' + subject + '」のメールの送信に失敗しました。', 'plain', 'utf-8')
@@ -229,12 +235,6 @@ class Gmail:
 
             smtp = smtplib.SMTP(settings.HOST, settings.PORT)
             smtp.sendmail(mail_from, settings.MYADDR, msg.as_string())
-
-            errmailfile = os.path.join(settings.ERRMAILDIR, datetime.now().strftime("%Y%m%d%H%M%S.eml"))
-            f = open(errmailfile, 'w')
-            f.write(mail_header_buf)
-            f.write(mail_body_buf)
-            f.close()
         else:
             logger.debug("Success proxy to gmail")
 
@@ -252,7 +252,11 @@ def main():
     logger.info('start gmail_proxy (ver ' + __version__ + ') at ' + now)
 
     gmail = Gmail()
-    gmail.do_proxy()
+    try:
+        gmail.do_proxy()
+    except:
+        logger.error('Unexpected error:', sys.exc_info()[0])
+
     logger.info('complete gmail_proxy (ver ' + __version__ + ')')
 
     sys.exit(0)
