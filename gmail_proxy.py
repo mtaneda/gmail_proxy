@@ -20,6 +20,7 @@ __version__ = '0.4'
 
 import sys
 import socket
+import traceback
 import logging
 import logging.handlers
 import os.path
@@ -89,9 +90,9 @@ class StreamUtil:
                 offline_flag = True
             else:
                 logger.debug('RECV: ' + buf.strip())
-                outstcode = buf.split(' ')[0]
-                if outstcode != okstcode:
-                    logger.error('Status error: ' + outstcode + ' required was ' + okstcode)
+                outstcode[0] = buf.split(' ')[0]
+                if outstcode[0] != okstcode:
+                    logger.error('Status error: ' + outstcode[0] + ' required was ' + okstcode)
                     offline_flag = True
 
         return offline_flag
@@ -127,7 +128,7 @@ class Gmail:
 
         s = None
         connected_flag = False
-        received_stcode = ''
+        received_stcode = ['']
         for res in socket.getaddrinfo(settings.HOST, settings.PORT, socket.AF_UNSPEC, socket.SOCK_STREAM):
             af, socktype, proto, canonname, sa = res
             try:
@@ -201,8 +202,9 @@ class Gmail:
                     logger.debug('SEND: ' + line.strip())
 
         offline = su.send_and_recv(s, offline, '\r\n.\r\n', '250', received_stcode)
-        if received_stcode == '552-5.7.0': # もし gmail からの応答が BlockedMessage だったら、
-                                           # offline フラグを強制的に偽にして、エラーメール通知を送らなくする
+	logger.debug('RECEIVED_STCODE: ' + received_stcode[0])
+        if received_stcode[0] == '552-5.7.0': # もし gmail からの応答が BlockedMessage だったら、
+                                              # offline フラグを強制的に偽にして、エラーメール通知を送らなくする
             logger.error('gmail says BlockedMessage, so don\'t notify with mail.')
             offline = False
         offline = su.send_and_recv(s, offline, 'QUIT\r\n', '221', received_stcode)
@@ -255,7 +257,7 @@ def main():
     try:
         gmail.do_proxy()
     except:
-        logger.error('Unexpected error:', sys.exc_info()[0])
+        logger.error('exception: ' + traceback.format_exc())
 
     logger.info('complete gmail_proxy (ver ' + __version__ + ')')
 
