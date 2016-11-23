@@ -16,12 +16,14 @@ Copyright (C) 2016 TANEDA M.
 This code was designed and coded by TANEDA M.
 """
 __author__  = 'TANEDA M.'
-__version__ = '0.2'
+__version__ = '0.3'
 
 import sys
 import socket
 import logging
+import logging.handlers
 import smtplib
+import settings
 from email.message import Message
 from email.parser import Parser
 from email.header import decode_header
@@ -31,13 +33,7 @@ from email.mime.text import MIMEText
 """
 設定
 """
-HOST     = '64.233.187.27'      # Google MX
-#HOST     = 'localhost'
-PORT     = 25
-MYDOMAIN = 'ncad.co.jp'
-MYADDR   = 'mtaneda@ncad.co.jp'
 BUFSIZ   = 1024
-LOGFILE  = '/home/mtaneda/OreNoFile.log'
 
 class StreamUtil:
     """
@@ -68,7 +64,7 @@ class StreamUtil:
                 break
         return str
 
-    def send_and_recv(self, s, offline_flag, data, okstcode):
+    def send_and_recv(self, s, offline_flag, data, okstcode, outstcode):
         """ コマンドを送って、結果を受信する
 
         Keyword arguments:
@@ -76,23 +72,24 @@ class StreamUtil:
         offline_flag -- 現在のオフライン状態: True なら何もしない
         data -- 送りたいコマンド
         okstcode -- このコマンドが期待する応答コード (ASCII 数字 3桁)
+        outstcode -- 実際の応答コード
 
         Return value:
         更新されたoffline_flag
         """
         if not offline_flag:
             s.send(data)
-            logging.debug('SEND: ' + data.strip())
+            logger.debug('SEND: ' + data.strip())
 
             buf = s.recv(BUFSIZ)
             if not buf:
-                logging.error('Receive error')
+                logger.error('Receive error')
                 offline_flag = True
             else:
-                logging.debug('RECV: ' + buf.strip())
-                stcode = buf.split(' ')[0]
-                if stcode != okstcode:
-                    logging.error('Status error: ' + stcode + ' required was ' + okstcode)
+                logger.debug('RECV: ' + buf.strip())
+                outstcode = buf.split(' ')[0]
+                if outstcode != okstcode:
+                    logger.error('Status error: ' + outstcode + ' required was ' + okstcode)
                     offline_flag = True
 
         return offline_flag
@@ -127,7 +124,8 @@ class Gmail:
 
         s = None
         connected_flag = False
-        for res in socket.getaddrinfo(HOST, PORT, socket.AF_UNSPEC, socket.SOCK_STREAM):
+        received_stcode = ''
+        for res in socket.getaddrinfo(settings.HOST, settings.PORT, socket.AF_UNSPEC, socket.SOCK_STREAM):
             af, socktype, proto, canonname, sa = res
             try:
                 s = socket.socket(af, socktype, proto)
@@ -143,9 +141,9 @@ class Gmail:
             break
 
         if s is None:
-            logging.error('Can\'t connect to: ' + HOST)
+            logger.error('Can\'t connect to: ' + settings.HOST)
         else:
-            logging.debug('Connected to: ' + HOST)
+            logger.debug('Connected to: ' + settings.HOST)
             offline = False
             connected_flag = True
 
@@ -153,25 +151,25 @@ class Gmail:
         if not offline:
             buf = s.recv(BUFSIZ)
             if not buf:
-                logging.error('Receive error')
+                logger.error('Receive error')
                 offline = True
             else:
-                logging.debug('RECV: ' + buf.strip())
+                logger.debug('RECV: ' + buf.strip())
                 stcode = buf.split(' ')[0]
                 if stcode != '220':
-                    logging.error('Status error: ' + stcode + ' required was ' + okstcode)
+                    logger.error('Status error: ' + stcode + ' required was ' + okstcode)
                     offline = True
         # TODO メソッド抽出
         if not offline:
-            ehlomsg = 'EHLO ' + MYDOMAIN + '\r\n'
+            ehlomsg = 'EHLO ' + settings.MYDOMAIN + '\r\n'
             s.send(ehlomsg)
-            logging.debug('SEND: ' + ehlomsg.strip())
+            logger.debug('SEND: ' + ehlomsg.strip())
             buf = su.readline(s)
-            logging.debug('RECV: ' + buf.strip())
+            logger.debug('RECV: ' + buf.strip())
             # TODO エラー処理強化
             while buf.split(' ')[0] != '250':
                 buf = su.readline(s)
-                logging.debug('RECV: ' + buf.strip())
+                logger.debug('RECV: ' + buf.strip())
 
         state = self.STATE_FIRST_LINE
         for line in iter(sys.stdin.readline, ""):
@@ -181,58 +179,69 @@ class Gmail:
             if state == self.STATE_FIRST_LINE:
                 mail_from = line.split(' ')[1]
                 state = self.STATE_HEADER
-                offline = su.send_and_recv(s, offline, 'MAIL FROM:<' + mail_from + '>\r\n', '250')
-                offline = su.send_and_recv(s, offline, 'RCPT TO:<' + MYADDR + '>\r\n', '250')
-                offline = su.send_and_recv(s, offline, 'DATA\r\n', '354')
+                offline = su.send_and_recv(s, offline, 'MAIL FROM:<' + mail_from + '>\r\n', '250', received_stcode)
+                offline = su.send_and_recv(s, offline, 'RCPT TO:<' + settings.MYADDR + '>\r\n', '250', received_stcode)
+                offline = su.send_and_recv(s, offline, 'DATA\r\n', '354', received_stcode)
 
             if state == self.STATE_HEADER:
                 mail_header_buf += line
                 if not offline:
                     s.send(line)
-                    logging.debug('SEND: ' + line.strip())
+                    logger.debug('SEND: ' + line.strip())
                 if line == '\n':
                     state = self.STATE_BODY
 
             if state == self.STATE_BODY:
                 if not offline:
                     s.send(line)
-                    logging.debug('SEND: ' + line.strip())
+                    logger.debug('SEND: ' + line.strip())
 
-        offline = su.send_and_recv(s, offline, '\r\n.\r\n', '250')
-        offline = su.send_and_recv(s, offline, 'QUIT\r\n', '221')
+        offline = su.send_and_recv(s, offline, '\r\n.\r\n', '250', received_stcode)
+        if received_stcode == '552-5.7.0': # もし gmail からの応答が BlockedMessage だったら、
+                                           # offline フラグを強制的に偽にして、エラーメール通知を送らなくする
+            offline = False
+        offline = su.send_and_recv(s, offline, 'QUIT\r\n', '221', received_stcode)
 
         # ヘッダーから件名を取得してログに出しておく
         p = Parser()
         header = p.parsestr(mail_header_buf, True)  # True=headeronly
         subject_enc = decode_header(header['Subject'])[0]
         subject = subject_enc[0]
-        logging.info("Subject: " + subject);
+        logger.info("Subject: " + subject);
         if subject_enc[1] is not None:
-            logging.info("Subject-Encoding: " + subject_enc[1])
+            logger.info("Subject-Encoding: " + subject_enc[1])
 
         if connected_flag and offline:
-            logging.debug("Failed to gmail")
+            logger.debug("Failed proxy to gmail")
 
-             # エラーになったときの失敗を通知する処理
+            # エラーになったときの失敗を通知する処理
+            # TODO: harre-orz氏に作ってもらった機能は、これだけのために smtplib を使っているのでいずれ統一する。
             msg = MIMEText('「' + subject + '」のメールの送信に失敗しました。', 'plain', 'utf-8')
             msg['Subject'] = Header(subject, 'utf-8')
             msg['From'] = header['From']
             msg['To'] = header['To']
             msg['Date'] = header['Date']
 
-            smtp = smtplib.SMTP(HOST, PORT)
-            smtp.sendmail(mail_from, MYADDR, msg.as_string())
+            smtp = smtplib.SMTP(settings.HOST, settings.PORT)
+            smtp.sendmail(mail_from, settings.MYADDR, msg.as_string())
+        else:
+            logger.debug("Success proxy to gmail")
 
 def main():
     """ メイン関数
     """
 
-    logging.basicConfig(filename = LOGFILE, level = logging.DEBUG)
-    logging.info('start gmail_proxy (ver ' + __version__ + ')')
+    global logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    rfh = logging.handlers.RotatingFileHandler(filename = settings.LOGFILE, maxBytes = 1099511627776, backupCount = 99)
+    rfh.setLevel(logging.DEBUG)
+    logger.addHandler(rfh)
+    logger.info('start gmail_proxy (ver ' + __version__ + ')')
 
     gmail = Gmail()
     gmail.do_proxy()
-    logging.info('complete gmail_proxy (ver ' + __version__ + ')')
+    logger.info('complete gmail_proxy (ver ' + __version__ + ')')
 
     sys.exit(0)
 
