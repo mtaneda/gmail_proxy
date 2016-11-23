@@ -1,0 +1,5 @@
+HOST      = '64.233.187.27'
+PORT      = 25
+MYDOMAIN  = 'hijklmn.op'
+MYADDR    = 'abcdefg@hijklmn.op'
+LOGFILE   = '/tmp/abcdefg.log'
