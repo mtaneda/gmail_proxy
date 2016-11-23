@@ -16,14 +16,16 @@ Copyright (C) 2016 TANEDA M.
 This code was designed and coded by TANEDA M.
 """
 __author__  = 'TANEDA M.'
-__version__ = '0.3'
+__version__ = '0.4'
 
 import sys
 import socket
 import logging
 import logging.handlers
+import os.path
 import smtplib
 import settings
+from datetime import datetime
 from email.message import Message
 from email.parser import Parser
 from email.header import decode_header
@@ -120,6 +122,7 @@ class Gmail:
         """
         mail_from = ''
         mail_header_buf = ''
+        mail_body_buf = ''
         su = StreamUtil()
 
         s = None
@@ -192,6 +195,7 @@ class Gmail:
                     state = self.STATE_BODY
 
             if state == self.STATE_BODY:
+                mail_body_buf += line
                 if not offline:
                     s.send(line)
                     logger.debug('SEND: ' + line.strip())
@@ -199,6 +203,7 @@ class Gmail:
         offline = su.send_and_recv(s, offline, '\r\n.\r\n', '250', received_stcode)
         if received_stcode == '552-5.7.0': # もし gmail からの応答が BlockedMessage だったら、
                                            # offline フラグを強制的に偽にして、エラーメール通知を送らなくする
+            logger.error('gmail says BlockedMessage, so don\'t notify with mail.')
             offline = False
         offline = su.send_and_recv(s, offline, 'QUIT\r\n', '221', received_stcode)
 
@@ -224,6 +229,12 @@ class Gmail:
 
             smtp = smtplib.SMTP(settings.HOST, settings.PORT)
             smtp.sendmail(mail_from, settings.MYADDR, msg.as_string())
+
+            errmailfile = os.path.join(settings.ERRMAILDIR, datetime.now().strftime("%Y%m%d%H%M%S.eml"))
+            f = open(errmailfile, 'w')
+            f.write(mail_header_buf)
+            f.write(mail_body_buf)
+            f.close()
         else:
             logger.debug("Success proxy to gmail")
 
@@ -237,7 +248,8 @@ def main():
     rfh = logging.handlers.RotatingFileHandler(filename = settings.LOGFILE, maxBytes = 1099511627776, backupCount = 99)
     rfh.setLevel(logging.DEBUG)
     logger.addHandler(rfh)
-    logger.info('start gmail_proxy (ver ' + __version__ + ')')
+    now = datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    logger.info('start gmail_proxy (ver ' + __version__ + ') at ' + now)
 
     gmail = Gmail()
     gmail.do_proxy()
