@@ -3,3 +3,4 @@ PORT      = 25
 MYDOMAIN  = 'hijklmn.op'
 MYADDR    = 'abcdefg@hijklmn.op'
 LOGFILE   = '/tmp/abcdefg.log'
+ERRMAILDIR= '/tmp/'
